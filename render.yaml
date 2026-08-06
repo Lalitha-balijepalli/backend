@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: interview-pro-ai-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: standard        # free/starter tier is very likely to OOM with TF+Torch loaded; see notes below
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: WHISPER_MODEL
+        value: base
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false

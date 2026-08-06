@@ -1,0 +1,61 @@
+# ============================================================================
+# Interview Pro AI - backend/requirements.txt
+#
+# IMPORTANT DEPLOYMENT NOTES (read before touching versions):
+#
+# 1. torch is pulled from the PyTorch CPU-only wheel index below.
+#    Installing plain "torch==2.3.1" from PyPI on Linux pulls in the CUDA
+#    build by default, which drags in nvidia-cublas-cu12, nvidia-cudnn-cu12,
+#    nvidia-cusolver-cu12, nvidia-nccl-cu12, etc. Those packages alone add
+#    over 1.5GB of on-disk weight and a large chunk of resident memory once
+#    imported - completely wasted on Railway/Render, which give you CPU-only
+#    containers with no GPU. Using the CPU wheel index below is the single
+#    biggest win for image size / import memory.
+#
+# 2. tensorflow-cpu is used instead of tensorflow for the same reason: a
+#    smaller build with no GPU kernels, needed only for DeepFace.
+#
+# 3. Removed vs. the previous file: mediapipe, retina-face, librosa,
+#    soundfile, scikit-learn, scipy, gunicorn. None of these were imported
+#    anywhere in app/ (grep-verified) - they were dead weight in the image.
+#    - mediapipe_service.py / deepface_service.py are stub functions that
+#      never actually import mediapipe or (a second copy of) deepface.
+#    - voice_service.py / voice_analysis.py never import librosa/soundfile.
+#    - gunicorn was never referenced by the Dockerfile CMD (uvicorn is run
+#      directly).
+#    If/when you wire mediapipe or librosa into a real feature, add them
+#    back - and lazy-import them inside the service function, same pattern
+#    used for deepface/whisper below, so startup stays fast.
+#    (retina-face and pandas are still pulled in transitively by deepface's
+#    own dependency list - no need to pin them ourselves.)
+# ============================================================================
+
+# --- Web framework ---
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+python-dotenv==1.2.2
+python-multipart==0.0.32
+
+# --- External AI / DB clients (lightweight, no heavy ML deps) ---
+google-generativeai==0.8.6
+supabase==2.31.0
+
+# --- Computer vision / face-emotion pipeline (lazy-loaded at request time,
+#     see app/services/emotion_service.py) ---
+tensorflow-cpu==2.19.0
+tf_keras==2.19.0
+deepface==0.0.95
+opencv-python-headless==4.10.0.84
+
+# --- Speech-to-text pipeline (lazy-loaded at request time,
+#     see app/services/whisper_service.py) ---
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.1
+openai-whisper==20250625
+
+# --- Shared numeric stack (required transitively by deepface/whisper) ---
+numpy==1.26.4
+pandas==2.2.3
+
+# --- Utilities ---
+requests==2.32.3
