@@ -12,8 +12,9 @@
 #    containers with no GPU. Using the CPU wheel index below is the single
 #    biggest win for image size / import memory.
 #
-# 2. tensorflow-cpu is used instead of tensorflow for the same reason: a
-#    smaller build with no GPU kernels, needed only for DeepFace.
+# 2. deepface hard-depends on plain "tensorflow" + "opencv-python" (see the
+#    note further down) - we deliberately do NOT pin tensorflow-cpu or
+#    opencv-python-headless ourselves, to avoid a duplicate second install.
 #
 # 3. Removed vs. the previous file: mediapipe, retina-face, librosa,
 #    soundfile, scikit-learn, scipy, gunicorn. None of these were imported
@@ -42,10 +43,21 @@ supabase==2.31.0
 
 # --- Computer vision / face-emotion pipeline (lazy-loaded at request time,
 #     see app/services/emotion_service.py) ---
-tensorflow-cpu==2.19.0
+#
+# NOTE: deepface's own setup.py hard-pins plain "tensorflow" and
+# "opencv-python" as dependencies (not the -cpu/-headless variants). Pinning
+# tensorflow-cpu/opencv-python-headless ourselves does NOT replace those -
+# pip installs both packages side by side (confirmed in a real build log:
+# tensorflow-2.19.1 AND tensorflow-cpu-2.19.0, opencv-python-4.11 AND
+# opencv-python-headless-4.10 were all installed simultaneously), which
+# doubles disk/layer size for zero benefit, since deepface imports plain
+# "tensorflow" regardless. Letting deepface pull its own tensorflow/opencv is
+# smaller than trying to override it. (Plain "tensorflow" from PyPI does NOT
+# pull CUDA/nvidia-cu12 packages unless you request the "[and-cuda]" extra,
+# so there's no GPU-bloat risk here - it runs CPU-only automatically since
+# Railway/Render containers have no GPU.)
 tf_keras==2.19.0
 deepface==0.0.95
-opencv-python-headless==4.10.0.84
 
 # --- Speech-to-text pipeline (lazy-loaded at request time,
 #     see app/services/whisper_service.py) ---

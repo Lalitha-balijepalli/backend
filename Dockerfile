@@ -43,10 +43,18 @@ WORKDIR /app
 
 # Runtime-only OS deps actually needed by opencv/deepface/ffmpeg-based audio
 # handling. No compilers here - keeps the final image lean.
+#
+# libsm6/libxext6/libxrender1: deepface pulls in full "opencv-python" (not
+# -headless) as a hard dependency, which dynamically links against these X11
+# libs at import time even though we never use any GUI functions. Without
+# them cv2 raises "ImportError: libSM.so.6: cannot open shared object file".
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgl1 \
     libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Bring in the fully-built virtualenv from the builder stage.
