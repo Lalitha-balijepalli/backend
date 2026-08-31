@@ -1,58 +1,69 @@
 """
-DeepFace emotion-detection service.
+Facial emotion-detection service.
 
-IMPORTANT (deployment fix):
-`from deepface import DeepFace` at module import time transitively imports
-TensorFlow/tf_keras. Because `app/main.py` eagerly imports every route
-(including this one via `emotion.py`), TensorFlow was previously being
-imported the instant the app started - well before uvicorn bound to $PORT.
-That's a multi-hundred-MB, multi-second cost paid on every single startup,
-even for requests that never touch emotion detection, and it was a major
-contributor to Railway's health-check timeout / Render's OOM kill.
+Formerly ran DeepFace (TensorFlow) locally, first with eager loading, then
+with a lazy-loading fix. Lazy loading reduced *startup* memory, but the
+first real request still had to load TensorFlow + DeepFace's model into
+memory on top of the already-running app, contributing to Render free
+tier's 512MB OOM kills (confirmed in production logs).
 
-Fix: defer the `deepface` import until `detect_emotion` is actually called,
-and cache the imported module so the cost is paid once, lazily, on first use.
+Now classifies emotion via the Gemini API (vision) instead. Function
+name/signature (`detect_emotion(path) -> dict`) and return shape are
+unchanged so app/routes/emotion.py and the frontend need no changes:
+    {"dominant_emotion": str, "scores": {emotion: float, ...}}
+on success, or {"error": str} on failure - exactly like before.
 """
 
-import threading
+import json
+import mimetypes
+import pathlib
+import re
 
-_deepface_module = None
-_import_lock = threading.Lock()
+from app.services.gemini_client import get_model
+
+# Same emotion label set DeepFace used, so downstream consumers (frontend,
+# scoring logic) see the same keys as before.
+_EMOTION_LABELS = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
+
+_EMOTION_PROMPT = (
+    "Look at the face in this image and classify the person's emotion. "
+    "Respond with ONLY a JSON object (no markdown fences, no commentary) "
+    "in exactly this shape:\n"
+    '{"dominant_emotion": "<one of: angry, disgust, fear, happy, sad, surprise, neutral>", '
+    '"scores": {"angry": <0-100>, "disgust": <0-100>, "fear": <0-100>, "happy": <0-100>, '
+    '"sad": <0-100>, "surprise": <0-100>, "neutral": <0-100>}}\n'
+    "The scores should reflect your confidence for each emotion and do not need to sum to exactly 100."
+)
+
+_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
 
 
-def _get_deepface():
-    global _deepface_module
-    if _deepface_module is None:
-        with _import_lock:
-            if _deepface_module is None:  # double-checked locking
-                from deepface import DeepFace  # heavy import (pulls in TensorFlow) deferred
-                _deepface_module = DeepFace
-    return _deepface_module
-
-
-def detect_emotion(image_path: str):
+def detect_emotion(image_path: str) -> dict:
     try:
-        DeepFace = _get_deepface()
-        result = DeepFace.analyze(
-            img_path=image_path,
-            actions=["emotion"],
-            detector_backend="opencv",
-            enforce_detection=False
+        path = pathlib.Path(image_path)
+        mime_type = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+        image_bytes = path.read_bytes()
+
+        model = get_model()
+        response = model.generate_content(
+            [
+                {"mime_type": mime_type, "data": image_bytes},
+                _EMOTION_PROMPT,
+            ]
         )
 
-        if isinstance(result, list):
-            result = result[0]
+        raw_text = _JSON_FENCE_RE.sub("", response.text or "").strip()
+        result = json.loads(raw_text)
 
-        dominant_emotion = str(result["dominant_emotion"])
-
-        emotions = {}
-
-        for emotion, score in result["emotion"].items():
-            emotions[emotion] = float(score)
+        dominant_emotion = str(result["dominant_emotion"]).lower()
+        scores = {
+            label: float(result.get("scores", {}).get(label, 0.0))
+            for label in _EMOTION_LABELS
+        }
 
         return {
             "dominant_emotion": dominant_emotion,
-            "scores": emotions
+            "scores": scores,
         }
 
     except Exception as e:

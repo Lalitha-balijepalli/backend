@@ -1,40 +1,40 @@
 """
-Whisper transcription service.
+Speech transcription service.
 
-IMPORTANT (deployment fix):
-`whisper` transitively imports `torch`, and `whisper.load_model(...)` downloads
-and loads real model weights into memory. Previously this ran at MODULE IMPORT
-TIME, which means it executed the moment `app.main` was imported - i.e. before
-uvicorn even started binding to $PORT. On Railway/Render that made the
-container blow past the health-check window (and, combined with TensorFlow/
-DeepFace also loading eagerly, blow past the memory limit) before the server
-ever came up. That's why Render OOM'd and Railway showed "no logs" - the
-process was killed during import, before Python got a chance to flush stdout.
+Formerly ran openai-whisper (Torch) locally, first with eager loading, then
+with a lazy-loading fix. Lazy loading reduced *startup* memory, but the
+first real transcription request still had to load torch + the Whisper
+model into memory on top of the already-running app, which reliably
+exceeded Render free tier's 512MB ("Ran out of memory (used over 512MB)" in
+production logs).
 
-Fix: lazy-load the model on first actual use, cached afterwards.
+Now transcribes via the Gemini API instead. Function name/signature
+(`transcribe_audio(path) -> str`) is unchanged so app/routes/speech.py needs
+no changes.
 """
 
-import os
-import threading
+import mimetypes
+import pathlib
 
-_WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL", "base")
+from app.services.gemini_client import get_model
 
-_model = None
-_model_lock = threading.Lock()
-
-
-def _get_model():
-    """Load (and cache) the Whisper model on first use only."""
-    global _model
-    if _model is None:
-        with _model_lock:
-            if _model is None:  # double-checked locking
-                import whisper  # heavy import (pulls in torch) deferred until needed
-                _model = whisper.load_model(_WHISPER_MODEL_NAME)
-    return _model
+_TRANSCRIBE_PROMPT = (
+    "Transcribe this audio recording exactly as spoken. "
+    "Return ONLY the transcript text - no preamble, no commentary, "
+    "no quotation marks, no markdown formatting."
+)
 
 
 def transcribe_audio(audio_path: str) -> str:
-    model = _get_model()
-    result = model.transcribe(audio_path)
-    return result["text"]
+    path = pathlib.Path(audio_path)
+    mime_type = mimetypes.guess_type(path.name)[0] or "audio/mpeg"
+    audio_bytes = path.read_bytes()
+
+    model = get_model()
+    response = model.generate_content(
+        [
+            {"mime_type": mime_type, "data": audio_bytes},
+            _TRANSCRIBE_PROMPT,
+        ]
+    )
+    return (response.text or "").strip()

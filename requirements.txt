@@ -1,34 +1,24 @@
 # ============================================================================
 # Interview Pro AI - backend/requirements.txt
 #
-# IMPORTANT DEPLOYMENT NOTES (read before touching versions):
+# ARCHITECTURE NOTE (why there's no tensorflow/torch/deepface/whisper here):
 #
-# 1. torch is pulled from the PyTorch CPU-only wheel index below.
-#    Installing plain "torch==2.3.1" from PyPI on Linux pulls in the CUDA
-#    build by default, which drags in nvidia-cublas-cu12, nvidia-cudnn-cu12,
-#    nvidia-cusolver-cu12, nvidia-nccl-cu12, etc. Those packages alone add
-#    over 1.5GB of on-disk weight and a large chunk of resident memory once
-#    imported - completely wasted on Railway/Render, which give you CPU-only
-#    containers with no GPU. Using the CPU wheel index below is the single
-#    biggest win for image size / import memory.
+# The original stack ran DeepFace (TensorFlow) and Whisper (Torch) locally.
+# Lazy-loading them (only importing on first request, not at startup) fixed
+# Railway's health-check timeout, but it could NOT fix Render free tier's
+# 512MB memory ceiling: torch + a loaded Whisper model alone use ~490MB by
+# themselves, confirmed via production logs showing repeated
+# "Ran out of memory (used over 512MB)" kills on the very first real
+# request. No amount of code-level optimization closes that gap on a
+# 512MB instance.
 #
-# 2. deepface hard-depends on plain "tensorflow" + "opencv-python" (see the
-#    note further down) - we deliberately do NOT pin tensorflow-cpu or
-#    opencv-python-headless ourselves, to avoid a duplicate second install.
-#
-# 3. Removed vs. the previous file: mediapipe, retina-face, librosa,
-#    soundfile, scikit-learn, scipy, gunicorn. None of these were imported
-#    anywhere in app/ (grep-verified) - they were dead weight in the image.
-#    - mediapipe_service.py / deepface_service.py are stub functions that
-#      never actually import mediapipe or (a second copy of) deepface.
-#    - voice_service.py / voice_analysis.py never import librosa/soundfile.
-#    - gunicorn was never referenced by the Dockerfile CMD (uvicorn is run
-#      directly).
-#    If/when you wire mediapipe or librosa into a real feature, add them
-#    back - and lazy-import them inside the service function, same pattern
-#    used for deepface/whisper below, so startup stays fast.
-#    (retina-face and pandas are still pulled in transitively by deepface's
-#    own dependency list - no need to pin them ourselves.)
+# Fix: emotion detection and transcription now call the Gemini API
+# (multimodal) instead of running models locally - see
+# app/services/emotion_service.py and app/services/whisper_service.py.
+# This removes ~2GB+ of ML dependencies and keeps resident memory in the
+# tens of MB, comfortably inside free-tier limits, in exchange for network
+# calls to Gemini (which you already had a dependency on) and Gemini API
+# usage cost per request.
 # ============================================================================
 
 # --- Web framework ---
@@ -37,37 +27,9 @@ uvicorn[standard]==0.51.0
 python-dotenv==1.2.2
 python-multipart==0.0.32
 
-# --- External AI / DB clients (lightweight, no heavy ML deps) ---
+# --- AI / DB clients ---
 google-generativeai==0.8.6
 supabase==2.31.0
-
-# --- Computer vision / face-emotion pipeline (lazy-loaded at request time,
-#     see app/services/emotion_service.py) ---
-#
-# NOTE: deepface's own setup.py hard-pins plain "tensorflow" and
-# "opencv-python" as dependencies (not the -cpu/-headless variants). Pinning
-# tensorflow-cpu/opencv-python-headless ourselves does NOT replace those -
-# pip installs both packages side by side (confirmed in a real build log:
-# tensorflow-2.19.1 AND tensorflow-cpu-2.19.0, opencv-python-4.11 AND
-# opencv-python-headless-4.10 were all installed simultaneously), which
-# doubles disk/layer size for zero benefit, since deepface imports plain
-# "tensorflow" regardless. Letting deepface pull its own tensorflow/opencv is
-# smaller than trying to override it. (Plain "tensorflow" from PyPI does NOT
-# pull CUDA/nvidia-cu12 packages unless you request the "[and-cuda]" extra,
-# so there's no GPU-bloat risk here - it runs CPU-only automatically since
-# Railway/Render containers have no GPU.)
-tf_keras==2.19.0
-deepface==0.0.95
-
-# --- Speech-to-text pipeline (lazy-loaded at request time,
-#     see app/services/whisper_service.py) ---
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.3.1
-openai-whisper==20250625
-
-# --- Shared numeric stack (required transitively by deepface/whisper) ---
-numpy==1.26.4
-pandas==2.2.3
 
 # --- Utilities ---
 requests==2.32.3

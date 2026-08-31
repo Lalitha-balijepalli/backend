@@ -5,17 +5,14 @@
 #   Stage 1 "builder": installs build tools + compiles/downloads all Python
 #                       deps into an isolated virtualenv.
 #   Stage 2 "runtime":  copies ONLY the finished virtualenv + app code into a
-#                       clean slim image. gcc/g++/pip caches/apt lists never
-#                       make it into the final image.
+#                       clean slim image.
 #
-# Why this matters for Railway/Render:
-#   - The old single-stage Dockerfile kept gcc, g++, apt lists and pip's
-#     build cache in the FINAL image, inflating image size for no runtime
-#     benefit and slowing every deploy.
-#   - AI models (TensorFlow/DeepFace/Torch/Whisper) are lazy-loaded by the
-#     application code itself (see app/services/*.py) - NOT at import time -
-#     so `uvicorn` binds to $PORT within a second or two of container start,
-#     which is what Railway/Render's health check needs to see.
+# Architecture note: this backend no longer runs TensorFlow/Torch/DeepFace/
+# Whisper locally - emotion detection and transcription call the Gemini API
+# instead (see app/services/emotion_service.py and whisper_service.py). That
+# means no OS-level ML libs (ffmpeg, libGL, X11 libs, compilers) are needed
+# at runtime anymore - the whole stack is pure-Python HTTP clients, which is
+# what actually gets this comfortably under Render free tier's 512MB.
 # ============================================================================
 
 # ---------- Stage 1: builder ----------
@@ -23,7 +20,9 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# Build-time only OS deps (compilers for any package without a prebuilt wheel).
+# Build-time only OS deps, kept in case any transitive dependency needs to
+# compile from source on a given architecture. Discarded before the runtime
+# stage regardless, so this costs nothing in the final image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -40,22 +39,6 @@ RUN pip install --upgrade pip && \
 FROM python:3.12-slim AS runtime
 
 WORKDIR /app
-
-# Runtime-only OS deps actually needed by opencv/deepface/ffmpeg-based audio
-# handling. No compilers here - keeps the final image lean.
-#
-# libsm6/libxext6/libxrender1: deepface pulls in full "opencv-python" (not
-# -headless) as a hard dependency, which dynamically links against these X11
-# libs at import time even though we never use any GUI functions. Without
-# them cv2 raises "ImportError: libSM.so.6: cannot open shared object file".
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
-    && rm -rf /var/lib/apt/lists/*
 
 # Bring in the fully-built virtualenv from the builder stage.
 COPY --from=builder /opt/venv /opt/venv
@@ -79,7 +62,5 @@ USER appuser
 EXPOSE 8000
 
 # Railway/Render inject $PORT at runtime; default to 8000 for local
-# `docker run` where $PORT isn't set. Single worker keeps memory predictable
-# (each extra uvicorn worker would load its own copy of any AI model that
-# gets lazy-loaded, multiplying memory usage).
+# `docker run` where $PORT isn't set. Single worker keeps memory predictable.
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

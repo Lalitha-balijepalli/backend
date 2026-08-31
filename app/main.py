@@ -3,12 +3,11 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# NOTE: none of the route modules below import TensorFlow / Torch / DeepFace /
-# Whisper at module scope anymore - those heavy libraries are now lazy-loaded
-# inside the relevant service functions on first actual use (see
-# app/services/whisper_service.py and app/services/emotion_service.py).
-# This keeps process startup fast and memory-light, which is required for
-# Railway/Render health checks to succeed before their startup timeout.
+# NOTE: emotion detection and transcription call the Gemini API instead of
+# running TensorFlow/Torch/DeepFace/Whisper locally (see
+# app/services/emotion_service.py and app/services/whisper_service.py) - the
+# combination reliably exceeded Render free tier's 512MB on the first real
+# request even with lazy imports, so the models were moved off-box entirely.
 from app.routes import emotion
 from app.routes import speech
 from app.routes.resume import router as resume_router
@@ -27,9 +26,9 @@ app = FastAPI(title="Interview Pro AI Backend")
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    # Deliberately does NOT touch TensorFlow/Torch/DeepFace/Whisper - those
-    # stay lazy until an endpoint that needs them is actually called.
-    logger.info("Interview Pro AI backend started - AI models are lazy-loaded on first use.")
+    # No local AI models to warm up - emotion/transcription go through the
+    # Gemini API per-request, so startup stays fast and memory-light.
+    logger.info("Interview Pro AI backend started.")
 
 # CORS
 app.add_middleware(
