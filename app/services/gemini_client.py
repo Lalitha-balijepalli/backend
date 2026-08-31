@@ -30,7 +30,14 @@ _configure_lock = threading.Lock()
 
 # Any current multimodal Gemini model works here; flash is fast/cheap and
 # sufficient for transcription + single-image emotion classification.
-_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+#
+# NOTE: gemini-2.0-flash was retired by Google after this was first written -
+# a live 404 from the API named "gemini-3.6-flash" as the replacement. Google
+# rotates model names periodically; if this default 404s again, check
+# https://ai.google.dev/gemini-api/docs/models for the current lineup, or
+# just set GEMINI_MODEL in your environment (Render/Railway dashboard) to
+# override this without a code change.
+_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
 
 class GeminiNotConfiguredError(RuntimeError):
