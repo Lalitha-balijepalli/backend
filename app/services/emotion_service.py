@@ -1,28 +1,28 @@
 """
 Facial emotion-detection service.
 
-Formerly ran DeepFace (TensorFlow) locally, first with eager loading, then
-with a lazy-loading fix. Lazy loading reduced *startup* memory, but the
-first real request still had to load TensorFlow + DeepFace's model into
-memory on top of the already-running app, contributing to Render free
-tier's 512MB OOM kills (confirmed in production logs).
-
-Now classifies emotion via the Gemini API (vision) instead. Function
-name/signature (`detect_emotion(path) -> dict`) and return shape are
-unchanged so app/routes/emotion.py and the frontend need no changes:
+Now calls a Groq-hosted vision model instead of Gemini (see
+app/services/groq_client.py for why). Function name/signature
+(`detect_emotion(path) -> dict`) and return shape are unchanged so
+app/routes/emotion.py and the frontend need no changes:
     {"dominant_emotion": str, "scores": {emotion: float, ...}}
 on success, or {"error": str} on failure - exactly like before.
 """
 
+import base64
 import json
 import mimetypes
 import pathlib
 import re
 
-from app.services.gemini_client import get_model
+import requests
 
-# Same emotion label set DeepFace used, so downstream consumers (frontend,
-# scoring logic) see the same keys as before.
+from app.services.groq_client import GROQ_API_BASE, VISION_MODEL, get_api_key
+
+_CHAT_URL = f"{GROQ_API_BASE}/chat/completions"
+
+# Same emotion label set the original DeepFace implementation used, so
+# downstream consumers (frontend, scoring logic) see the same keys as before.
 _EMOTION_LABELS = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
 
 _EMOTION_PROMPT = (
@@ -42,17 +42,32 @@ def detect_emotion(image_path: str) -> dict:
     try:
         path = pathlib.Path(image_path)
         mime_type = mimetypes.guess_type(path.name)[0] or "image/jpeg"
-        image_bytes = path.read_bytes()
+        image_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        data_url = f"data:{mime_type};base64,{image_b64}"
 
-        model = get_model()
-        response = model.generate_content(
-            [
-                {"mime_type": mime_type, "data": image_bytes},
-                _EMOTION_PROMPT,
-            ]
+        response = requests.post(
+            _CHAT_URL,
+            headers={
+                "Authorization": f"Bearer {get_api_key()}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": VISION_MODEL,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": _EMOTION_PROMPT},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    }
+                ],
+            },
+            timeout=60,
         )
-
-        raw_text = _JSON_FENCE_RE.sub("", response.text or "").strip()
+        response.raise_for_status()
+        raw_text = response.json()["choices"][0]["message"]["content"]
+        raw_text = _JSON_FENCE_RE.sub("", raw_text).strip()
         result = json.loads(raw_text)
 
         dominant_emotion = str(result["dominant_emotion"]).lower()

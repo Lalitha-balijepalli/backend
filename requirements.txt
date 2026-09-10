@@ -1,24 +1,23 @@
 # ============================================================================
 # Interview Pro AI - backend/requirements.txt
 #
-# ARCHITECTURE NOTE (why there's no tensorflow/torch/deepface/whisper here):
+# ARCHITECTURE NOTE (why there's no tensorflow/torch/deepface/whisper/genai
+# here):
 #
 # The original stack ran DeepFace (TensorFlow) and Whisper (Torch) locally.
-# Lazy-loading them (only importing on first request, not at startup) fixed
-# Railway's health-check timeout, but it could NOT fix Render free tier's
-# 512MB memory ceiling: torch + a loaded Whisper model alone use ~490MB by
-# themselves, confirmed via production logs showing repeated
-# "Ran out of memory (used over 512MB)" kills on the very first real
-# request. No amount of code-level optimization closes that gap on a
-# 512MB instance.
+# Lazy-loading them fixed Railway's health-check timeout, but not Render
+# free tier's 512MB ceiling: torch + a loaded Whisper model alone use ~490MB
+# by themselves, confirmed via production logs showing repeated
+# "Ran out of memory (used over 512MB)" kills on the first real request.
 #
-# Fix: emotion detection and transcription now call the Gemini API
-# (multimodal) instead of running models locally - see
-# app/services/emotion_service.py and app/services/whisper_service.py.
-# This removes ~2GB+ of ML dependencies and keeps resident memory in the
-# tens of MB, comfortably inside free-tier limits, in exchange for network
-# calls to Gemini (which you already had a dependency on) and Gemini API
-# usage cost per request.
+# That was fixed by moving emotion detection and transcription to a hosted
+# API. This went through Google Gemini first, but repeated API-key friction
+# and a mid-project model retirement (gemini-2.0-flash -> gemini-3.6-flash)
+# led to switching to Groq instead - see app/services/groq_client.py,
+# app/services/emotion_service.py, and app/services/whisper_service.py.
+#
+# Groq's API is OpenAI-compatible, so it's called with plain `requests` -
+# no SDK needed, keeping resident memory in the tens of MB.
 # ============================================================================
 
 # --- Web framework ---
@@ -28,7 +27,6 @@ python-dotenv==1.2.2
 python-multipart==0.0.32
 
 # --- AI / DB clients ---
-google-generativeai==0.8.6
 supabase==2.31.0
 
 # --- Utilities ---
