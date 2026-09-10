@@ -70,6 +70,12 @@ def detect_emotion(image_path: str) -> dict:
                 # for this, the debug_raw_response below will show it.
                 "reasoning_effort": "none",
                 "temperature": 0,
+                # Without an explicit cap, Groq reserves your worst-case
+                # max output against the free tier's output-tokens-per-minute
+                # limit (1000 OTPM on this model) even if the actual answer
+                # is short - which is what triggered a 429 in testing. Our
+                # JSON answer is a couple hundred tokens at most.
+                "max_tokens": 200,
             },
             timeout=60,
         )
