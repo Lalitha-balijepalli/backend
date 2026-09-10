@@ -24,10 +24,15 @@ GROQ_API_BASE = "https://api.groq.com/openai/v1"
 TRANSCRIBE_MODEL = os.getenv("GROQ_TRANSCRIBE_MODEL", "whisper-large-v3")
 
 # Vision-capable chat model for emotion classification. Groq's vision model
-# lineup rotates more often than Whisper does - if this 404s or errors,
-# check https://console.groq.com/docs/vision for the current model id and
-# set GROQ_VISION_MODEL in your environment to override, no code change needed.
-VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
+# lineup rotates more often than Whisper does - llama-3.2-11b-vision-preview
+# (the original default) was retired, then its successor
+# meta-llama/llama-4-scout-17b-16e-instruct was ALSO retired. Confirmed
+# current model via https://console.groq.com/docs/vision : qwen/qwen3.6-27b
+# (qwen/qwen3.8-27b is a newer alternative, capped at 3 images/request vs
+# qwen3.6-27b's 5). If this 404s/decommissions again, check that docs page
+# and set GROQ_VISION_MODEL in your environment to override - no code
+# change needed.
+VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
 
 
 class GroqNotConfiguredError(RuntimeError):

@@ -12,7 +12,7 @@ services:
       - key: GROQ_TRANSCRIBE_MODEL
         value: whisper-large-v3
       - key: GROQ_VISION_MODEL
-        value: llama-3.2-11b-vision-preview
+        value: qwen/qwen3.6-27b
       - key: GROQ_API_KEY
         sync: false
       - key: SUPABASE_URL
