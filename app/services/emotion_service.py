@@ -65,7 +65,11 @@ def detect_emotion(image_path: str) -> dict:
             },
             timeout=60,
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            # Surface Groq's actual error body (e.g. "model has been
+            # decommissioned") instead of requests' generic "400 Bad
+            # Request" message, which has no diagnostic value on its own.
+            return {"error": f"Groq API error {response.status_code}: {response.text}"}
         raw_text = response.json()["choices"][0]["message"]["content"]
         raw_text = _JSON_FENCE_RE.sub("", raw_text).strip()
         result = json.loads(raw_text)

@@ -29,5 +29,9 @@ def transcribe_audio(audio_path: str) -> str:
             data={"model": TRANSCRIBE_MODEL},
             timeout=120,
         )
-    response.raise_for_status()
+    if response.status_code != 200:
+        # Surface Groq's actual error body instead of a generic HTTPError,
+        # so the real reason (e.g. a retired model name) is visible without
+        # digging through Render's logs.
+        raise RuntimeError(f"Groq API error {response.status_code}: {response.text}")
     return response.json().get("text", "").strip()

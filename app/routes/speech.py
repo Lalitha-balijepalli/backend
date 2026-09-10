@@ -15,7 +15,13 @@ async def transcribe(file: UploadFile = File(...)):
     with open(filepath, "wb") as buffer:
         buffer.write(await file.read())
 
-    text = transcribe_audio(filepath)
+    try:
+        text = transcribe_audio(filepath)
+    except Exception as e:
+        # Return the real Groq error in the response body (visible in the
+        # docs UI / curl output directly) instead of a bare 500 that
+        # requires digging through Render logs.
+        return {"error": str(e)}
 
     return {
         "transcription": text
