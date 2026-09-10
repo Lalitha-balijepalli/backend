@@ -62,6 +62,14 @@ def detect_emotion(image_path: str) -> dict:
                         ],
                     }
                 ],
+                # Qwen 3.6/3.8 on Groq support a "thinking" mode that can
+                # consume the whole response on reasoning tokens, leaving
+                # message.content empty (what we hit in testing). Asking for
+                # low/no reasoning effort keeps the reply to just the final
+                # JSON answer. If Groq's API uses a different parameter name
+                # for this, the debug_raw_response below will show it.
+                "reasoning_effort": "none",
+                "temperature": 0,
             },
             timeout=60,
         )
@@ -70,7 +78,20 @@ def detect_emotion(image_path: str) -> dict:
             # decommissioned") instead of requests' generic "400 Bad
             # Request" message, which has no diagnostic value on its own.
             return {"error": f"Groq API error {response.status_code}: {response.text}"}
-        raw_text = response.json()["choices"][0]["message"]["content"]
+
+        response_json = response.json()
+        message = response_json["choices"][0]["message"]
+        raw_text = (message.get("content") or "").strip()
+
+        if not raw_text:
+            # Empty content even after asking for no reasoning - surface the
+            # full response so the actual shape (e.g. a separate "reasoning"
+            # field, or a finish_reason of "length") is visible without
+            # another round-trip through Render's logs.
+            return {
+                "error": "Groq returned empty content.",
+                "debug_raw_response": response_json,
+            }
         raw_text = _JSON_FENCE_RE.sub("", raw_text).strip()
         result = json.loads(raw_text)
 
